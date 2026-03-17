@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "napari-colab"
-version = "0.1.0"
+version = "0.1.2"
 description = "Interactive napari viewer inside Google Colab via noVNC"
 readme = "README.md"
 license = "MIT"
