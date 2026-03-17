@@ -63,15 +63,18 @@ screenshot()   # inline preview
 ### ViewerProxy
 
 ```python
-viewer.open(paths, stack=True, name='layer', layer_type='image'|'labels')
-viewer.add_image(np_array, name='...', colormap='...', blending='...')
-viewer.add_labels(np_array, name='...')
+viewer.open(paths, stack=True, name='layer', layer_type='image'|'labels', scale=(z,y,x))
+viewer.add_image(np_array, name='...', colormap='...', blending='...', scale=(z,y,x))
+viewer.add_labels(np_array, name='...', scale=(z,y,x))
 viewer.dims.ndisplay = 2 | 3
 viewer.camera.angles = (rx, ry, rz)
 viewer.camera.zoom   = 1.5
 viewer.reset_view()
 viewer.window.resize(w, h)
 ```
+
+> **Tip:** If your 3D z-stack looks flat, set `scale` to match your voxel spacing.
+> For example, if z-spacing is 5x the xy pixel size: `scale=(5, 1, 1)`
 
 ## How it works
 

@@ -1,30 +1,38 @@
 """
 napari_colab.py
-???????????????
+
 Interactive napari viewer inside Google Colab via noVNC.
 
 Usage
------
+------------
     from napari_colab import setup, open_viewer, screenshot, shutdown
 
-    url = setup()                    # run ONCE per session ? open URL in new tab
-    viewer = open_viewer(1800, 1000) # launch napari
+> **Note:** the system packages (`xvfb`, `x11vnc`, `scrot`, xcb libraries) are
+> installed automatically by `setup()` on first run via `apt-get`.
 
-    from pathlib import Path
-    raw    = Path('BBBC014_v1_images_tiff/')
-    labels = Path('BBBC014_label_folder/')
+## Quick start
 
-    viewer.open(sorted(raw.glob('*Channel 2*.tiff')), stack=True, name='nuclei')
-    viewer.open(sorted(raw.glob('*Channel 1*.tiff')), stack=True, name='nfkappab')
-    viewer.open(sorted(labels.glob('*Channel*.tiff')), stack=True,
-                layer_type='labels', name='label')
+```python
+# Cell 1 — once per session
+from napari_colab import setup, open_viewer, screenshot, shutdown
 
-    viewer.dims.ndisplay = 3         # switch to 3-D view
-    viewer.camera.angles = (30,45,0)
-    viewer.reset_view()
+# Cell 2 — launch viewer (URL printed here)
+viewer = open_viewer(width=1800, height=1000)
 
-    screenshot()                     # inline preview anytime
-    shutdown()                       # clean up at end of session
+# Cell 3 — load your data
+from pathlib import Path
+images = sorted(Path('my_images/').glob('*.tiff'))
+labels = sorted(Path('my_labels/').glob('*.tiff'))
+
+viewer.open(images, stack=True, name='raw')
+viewer.open(labels, stack=True, layer_type='labels', name='segmentation')
+
+# Cell 4 — optional extras
+viewer.dims.ndisplay = 3
+viewer.camera.angles = (30, 45, 0)
+screenshot()   # inline preview
+
+License: MIT
 
 Architecture
 ------------
@@ -37,15 +45,15 @@ Architecture
 import os, sys, time, socket, struct, json, base64, subprocess, fcntl, threading, tempfile
 from pathlib import Path
 
-# ?? module-level state ????????????????????????????????????????????????????????
+# == module-level state ==========================================================
 proc      = None   # the napari subprocess (kept as module-level so it survives cells)
 _setup_done = False
 _CMD_PORT = 9999
 
 
-# ?????????????????????????????????????????????????????????????????????????????
+# ==========================================================================
 #  PUBLIC API
-# ?????????????????????????????????????????????????????????????????????????????
+#===========================================================================
 
 def setup(display=':99', vnc_port=5900, novnc_port=6080,
           resolution='1600x1000x24'):
@@ -74,7 +82,7 @@ def open_viewer(width=1800, height=1000):
         setup()
 
     if proc is not None and proc.poll() is None:
-        print("napari already running ? returning existing proxy.")
+        print("napari already running! returning existing proxy.")
         return ViewerProxy()
 
     script = _build_server_script(width, height)
@@ -87,11 +95,11 @@ def open_viewer(width=1800, height=1000):
     proc = subprocess.Popen(
         [sys.executable, spath],
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,   # merge ? one stream to monitor
+        stderr=subprocess.STDOUT,   # merge  one stream to monitor
         env=env,
     )
 
-    print(f"napari PID {proc.pid} ? streaming startup output:\n")
+    print(f"napari PID {proc.pid} streaming startup output:\n")
     fcntl.fcntl(proc.stdout, fcntl.F_SETFL, os.O_NONBLOCK)
 
     ready    = False
@@ -112,14 +120,14 @@ def open_viewer(width=1800, height=1000):
                 rest = proc.stdout.read().decode(errors='replace')
                 if rest: print(rest)
             except Exception: pass
-            raise RuntimeError("napari failed to start ? see output above")
+            raise RuntimeError("napari failed to start. See output above")
         time.sleep(0.05)
 
     url = _colab_url(6080)
     if ready:
-        print(f"\n? napari ready ? open in a NEW browser tab:\n\n   {url}\n")
+        print(f"\n Napari ready! open in a NEW browser tab:\n\n   {url}\n")
     else:
-        print(f"\n??  No READY signal ? napari may still be starting.\n   {url}\n")
+        print(f"\n No READY signal! napari may still be starting.\n   {url}\n")
 
     # background thread: keep draining stdout so the pipe never blocks
     threading.Thread(target=_drain_stdout, args=(proc,), daemon=True).start()
@@ -165,9 +173,10 @@ class ViewerProxy:
     Thin proxy for the real napari.Viewer running in the subprocess.
 
     Supported calls
-    ???????????????
-    viewer.open(paths, stack=True, name='...', layer_type='image'|'labels')
-    viewer.add_image(np_array, name='...', colormap='...', blending='...')
+    
+    viewer.open(paths, stack=True, name='...', layer_type='image'|'labels', scale=(z,y,x))
+    viewer.add_image(np_array, name='...', colormap='...', blending='...', scale=(z,y,x))
+    viewer.add_labels(np_array, name='...', scale=(z,y,x))
     viewer.dims.ndisplay = 2 | 3
     viewer.camera.angles = (rx, ry, rz)
     viewer.camera.zoom   = float
@@ -179,9 +188,9 @@ class ViewerProxy:
              layer_type='image', **kwargs):
         paths = [str(p) for p in paths]
         if not paths:
-            print(f"??  No files matched for layer '{name}'")
+            print(f" No files matched for layer '{name}'")
             return
-        print(f"? sending {len(paths)} file(s) as '{name}' [{layer_type}]")
+        print(f" sending {len(paths)} file(s) as '{name}' [{layer_type}]")
         _send({'action': 'open', 'paths': paths, 'stack': stack,
                'name': name, 'layer_type': layer_type, **kwargs})
 
@@ -190,6 +199,18 @@ class ViewerProxy:
         arr = np.asarray(array)
         payload = {
             'action': 'add_image',
+            'array_b64': base64.b64encode(arr.tobytes()).decode('ascii'),
+            'array_shape': list(arr.shape),
+            'array_dtype': str(arr.dtype),
+            **kwargs,
+        }
+        _send(payload)
+
+    def add_labels(self, array, **kwargs):
+        import numpy as np
+        arr = np.asarray(array)
+        payload = {
+            'action': 'add_labels',
             'array_b64': base64.b64encode(arr.tobytes()).decode('ascii'),
             'array_shape': list(arr.shape),
             'array_dtype': str(arr.dtype),
@@ -224,9 +245,9 @@ class _WindowProxy:
         _send({'action': 'resize_window', 'w': w, 'h': h})
 
 
-# ?????????????????????????????????????????????????????????????????????????????
+# =============================================================================
 #  Command transport (JSON over loopback TCP)
-# ?????????????????????????????????????????????????????????????????????????????
+# =============================================================================
 
 def _send(cmd, retries=5):
     for attempt in range(retries):
@@ -244,9 +265,9 @@ def _send(cmd, retries=5):
             time.sleep(1)
 
 
-# ?????????????????????????????????????????????????????????????????????????????
+# =============================================================================
 #  Subprocess server script
-# ?????????????????????????????????????????????????????????????????????????????
+# =============================================================================
 
 def _build_server_script(width, height):
     return f'''\
@@ -263,7 +284,7 @@ print("[server] napari imported OK", flush=True)
 
 _q = queue.Queue()
 
-# ?? command executor (runs on Qt main thread via QTimer) ?????????????????????
+# == command executor (runs on Qt main thread via QTimer) ==========================
 def _execute(cmd):
     action = cmd.get("action")
     print(f"[server] executing: {{action}}", flush=True)
@@ -273,10 +294,15 @@ def _execute(cmd):
         stack      = cmd.get("stack", True)
         name       = cmd.get("name", "layer")
         layer_type = cmd.get("layer_type", "image")
+        scale      = cmd.get("scale")
         extra      = {{k: v for k, v in cmd.items()
-                       if k not in ("action","paths","stack","name","layer_type")}}
+                       if k not in ("action","paths","stack","name","layer_type","scale")}}
         print(f"[server] viewer.open() {{len(paths)}} paths ? {{name!r}}", flush=True)
         viewer.open(paths, stack=stack, name=name, layer_type=layer_type, **extra)
+        if scale is not None:
+            for layer in viewer.layers:
+                if layer.name == name:
+                    layer.scale = tuple(scale)
         viewer.reset_view()
         print(f"[server] ? {{name!r}} loaded", flush=True)
 
@@ -288,6 +314,15 @@ def _execute(cmd):
         ).reshape(cmd.pop("array_shape"))
         cmd.pop("action", None)
         viewer.add_image(arr, **cmd)
+
+    elif action == "add_labels":
+        import numpy as np
+        arr = np.frombuffer(
+            base64.b64decode(cmd.pop("array_b64")),
+            dtype=cmd.pop("array_dtype"),
+        ).reshape(cmd.pop("array_shape"))
+        cmd.pop("action", None)
+        viewer.add_labels(arr, **cmd)
 
     elif action == "set_ndisplay":
         viewer.dims.ndisplay = cmd["value"]
@@ -315,7 +350,7 @@ def _drain():
             traceback.print_exc()
             sys.stdout.flush()
 
-# ?? socket server (background thread) ????????????????????????????????????????
+# == socket server (background thread) ==========================================
 def _recv_all(s, n):
     buf = b""
     while len(buf) < n:
@@ -345,7 +380,7 @@ def _server():
 
 threading.Thread(target=_server, daemon=True).start()
 
-# ?? napari viewer ?????????????????????????????????????????????????????????????
+# == napari viewer ==============================================================
 print("[server] creating viewer...", flush=True)
 viewer = napari.Viewer()
 viewer.window.resize({width}, {height})
@@ -364,9 +399,9 @@ napari.run()
 '''
 
 
-# ?????????????????????????????????????????????????????????????????????????????
+# =============================================================================
 #  Infrastructure helpers
-# ?????????????????????????????????????????????????????????????????????????????
+# =============================================================================
 
 def _install_deps():
     print("Installing system packages...")
@@ -407,7 +442,7 @@ def _start_xvfb(display, resolution):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(2)
-    print("Xvfb ?")
+    
 
 
 def _start_x11vnc(display, port):
@@ -419,7 +454,7 @@ def _start_x11vnc(display, port):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(1)
-    print("x11vnc ?")
+    
 
 
 def _start_novnc(vnc_port, novnc_port):
@@ -431,8 +466,7 @@ def _start_novnc(vnc_port, novnc_port):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(1)
-    print("noVNC ?")
-
+   
 
 def _build_env():
     return {
