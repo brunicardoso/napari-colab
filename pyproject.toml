@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "napari[all]>=0.4.18",
+    "opencv-python-headless",
     "tifffile>=2023.2.3",
     "qtpy>=2.3.0",
     "websockify>=0.11.0",
